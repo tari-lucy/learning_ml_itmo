@@ -32,29 +32,12 @@ class SummaryModel(MLModel):
 
 
 class User:
-    def __init__(
-        self,
-        user_id: int,
-        login: str,
-        password: str,
-        name: str,
-        role: str,
-        balance: float = 0.0,
-    ):
+    def __init__(self, user_id: int, login: str, password: str, name: str, role: str):
         self.user_id = user_id
         self._login = login
         self._password = password
         self.name = name
         self._role = role
-        self._balance = balance
-
-    def check_balance(self) -> float:
-        # проверка баланса
-        pass
-
-    def add_balance(self, add_credits: float) -> float:
-        # пополнить баланс
-        pass
 
     def check_history(self) -> list:
         # проверить историю
@@ -62,16 +45,8 @@ class User:
 
 
 class Admin(User):
-    def __init__(
-        self,
-        user_id: int,
-        login: str,
-        password: str,
-        name: str,
-        role: str,
-        balance: float = 0.0,
-    ):
-        super().__init__(user_id, login, password, name, role, balance)
+    def __init__(self, user_id: int, login: str, password: str, name: str, role: str):
+        super().__init__(user_id, login, password, name, role)
 
     def moderation_balance(self, user_id: int, add_credits: float) -> float:
         # модерация пополнения баланса пользователя
@@ -102,6 +77,24 @@ class Transaction:
 
     def apply(self):
         raise NotImplementedError
+
+
+class Balance:
+    def __init__(self, user_id: int, amount: float = 0.0):
+        self.user_id = user_id
+        self._amount = amount
+
+    def check(self) -> float:
+        # проверка баланса
+        pass
+
+    def add(self, credits: float) -> float:
+        # пополнение
+        pass
+
+    def deduct(self, credits: float) -> float:
+        # списание
+        pass
 
 
 class DebitTransaction(Transaction):
