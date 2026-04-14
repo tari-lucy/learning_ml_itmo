@@ -14,6 +14,13 @@ class Settings(BaseSettings):
     APP_NAME: Optional[str] = None
     DEBUG: Optional[bool] = None
     API_VERSION: Optional[str] = None
+    # RabbitMQ settings
+    RABBITMQ_HOST: Optional[str] = None
+    RABBITMQ_PORT: Optional[int] = None
+    RABBITMQ_USER: Optional[str] = None
+    RABBITMQ_PASSWORD: Optional[str] = None
+    RABBITMQ_QUEUE: str = "ml_tasks"
+
     
     @property
     def DATABASE_URL_asyncpg(self):

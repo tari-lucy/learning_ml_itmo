@@ -3,12 +3,14 @@ services:
   app:
     build: ./app
     container_name: meetingscribe-app
-    restart: "no"
+    restart: unless-stopped
     env_file: ./app/.env
     volumes:
       - ./app:/app
     depends_on:
       database:
+        condition: service_healthy
+      rabbitmq:
         condition: service_healthy
     networks:
       - internal
@@ -31,11 +33,21 @@ services:
     image: rabbitmq:3-management
     container_name: meetingscribe-rabbitmq
     restart: always
+    env_file: ./app/.env
+    environment:
+      RABBITMQ_DEFAULT_USER: ${RABBITMQ_USER}
+      RABBITMQ_DEFAULT_PASS: ${RABBITMQ_PASSWORD}
     ports:
       - "5672:5672"
       - "15672:15672"
     volumes:
       - rabbitmq-data:/var/lib/rabbitmq
+    healthcheck:
+      test: ["CMD", "rabbitmq-diagnostics", "check_port_connectivity"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 20s
     networks:
       - internal
 
@@ -57,6 +69,46 @@ services:
     networks:
       - internal
 
+  worker-1:
+    build: ./app
+    container_name: meetingscribe-worker-1
+    restart: always
+    env_file: ./app/.env
+    environment:
+      WORKER_ID: worker-1
+    command: python -m worker.consumer
+    volumes:
+      - ./app:/app
+    depends_on:
+      database:
+        condition: service_healthy
+      rabbitmq:
+        condition: service_healthy
+      app:
+        condition: service_started
+    networks:
+      - internal
+
+  worker-2:
+    build: ./app
+    container_name: meetingscribe-worker-2
+    restart: always
+    env_file: ./app/.env
+    environment:
+      WORKER_ID: worker-2
+    command: python -m worker.consumer
+    volumes:
+      - ./app:/app
+    depends_on:
+      database:
+        condition: service_healthy
+      rabbitmq:
+        condition: service_healthy
+      app:
+        condition: service_started
+    networks:
+      - internal
+
 
 volumes:
   db-data:
@@ -66,3 +118,4 @@ volumes:
 networks:
   internal:
     driver: bridge
+
