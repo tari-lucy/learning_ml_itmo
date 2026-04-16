@@ -13,6 +13,7 @@ venv/
 .venv/
 env/
 .env
+app/.env
 
 # IDE
 .vscode/
@@ -26,3 +27,5 @@ Thumbs.db
 
 # Docker
 docker-compose.override.yml
+
+app/uploads/

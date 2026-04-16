@@ -20,6 +20,11 @@ class Settings(BaseSettings):
     RABBITMQ_USER: Optional[str] = None
     RABBITMQ_PASSWORD: Optional[str] = None
     RABBITMQ_QUEUE: str = "ml_tasks"
+    # External APIs
+    REPLICATE_API_TOKEN: Optional[str] = None
+    VSELLM_API_KEY: Optional[str] = None
+    VSELLM_BASE_URL: Optional[str] = None
+
 
     
     @property

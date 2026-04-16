@@ -22,9 +22,8 @@ def seed_data():
     with Session(engine) as session:
         # ML-модели
         if not get_model_by_name("whisper", session):
-            create_ml_model(MLModel(name="whisper", description="Транскрибация аудио в текст", cost=10.0), session)
-            create_ml_model(MLModel(name="diarization", description="Определение спикеров", cost=5.0), session)
-            create_ml_model(MLModel(name="summary", description="Саммари и протокол совещания", cost=8.0), session)
+            create_ml_model(MLModel(name="whisper", description="Транскрибация аудио и диаризация спикеров (Replicate)", cost=10.0), session)
+            create_ml_model(MLModel(name="summary", description="Краткое саммари совещания на основе транскрипта (vsellm)", cost=5.0), session)
 
         # Демо-пользователь
         if not get_user_by_email("demo@meeting.ru", session):
