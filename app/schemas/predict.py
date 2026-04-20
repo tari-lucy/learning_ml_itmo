@@ -3,7 +3,6 @@ from typing import Optional
 
 
 class SummaryRequest(BaseModel):
-    user_id: int
     source_task_id: int = Field(..., description="ID задачи whisper, из которой берём транскрипт")
 
 
