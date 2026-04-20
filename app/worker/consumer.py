@@ -27,16 +27,29 @@ WORKER_ID = os.environ.get("WORKER_ID", "worker-?")
 
 
 def _process_message(body: bytes) -> None:
-    """
-    Обрабатывает одно сообщение из очереди: валидация, предикт, запись результата,
-    подтверждение резерва. При любой ошибке откатывает резерв и помечает task как error.
-    """
-    message: Dict[str, Any] = json.loads(body.decode("utf-8"))
-    task_id = message["task_id"]
-    features = message["features"]
-    model_name = message["model"]
+    """..."""
+    try:
+        message: Dict[str, Any] = json.loads(body.decode("utf-8"))
+    except json.JSONDecodeError as e:
+        logger.error(f"[{WORKER_ID}] невалидный JSON в сообщении: {e}")
+        return
+
+    task_id = message.get("task_id")
+    features = message.get("features")
+    model_name = message.get("model")
+
+    if not isinstance(task_id, int):
+        logger.error(f"[{WORKER_ID}] отсутствует или некорректный task_id в сообщении: {message}")
+        return
+    if not isinstance(features, dict):
+        logger.error(f"[{WORKER_ID}] отсутствует или некорректный features для task_id={task_id}")
+        return
+    if not isinstance(model_name, str) or not model_name:
+        logger.error(f"[{WORKER_ID}] отсутствует или некорректный model для task_id={task_id}")
+        return
 
     logger.info(f"[{WORKER_ID}] получил task_id={task_id}, model={model_name}")
+
 
     engine = get_database_engine()
     with Session(engine) as session:
