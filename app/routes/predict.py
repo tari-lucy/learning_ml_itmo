@@ -1,7 +1,7 @@
 import uuid
 from pathlib import Path
 
-from fastapi import APIRouter, Depends, HTTPException, UploadFile, File
+from fastapi import APIRouter, Depends, HTTPException, UploadFile, File, Form
 from sqlmodel import Session
 
 from database.database import get_session
@@ -21,7 +21,7 @@ ALLOWED_AUDIO_EXTENSIONS = {".mp3", ".wav", ".m4a", ".ogg", ".flac", ".webm"}
 
 
 @predict_router.post("/whisper", response_model=PredictAcceptedResponse, status_code=202)
-async def submit_whisper(audio: UploadFile = File(...), current_user_id: int = Depends(authenticate), session: Session =
+async def submit_whisper(audio: UploadFile = File(...), title: str = Form(""), current_user_id: int = Depends(authenticate), session: Session =
 Depends(get_session)):
     """Транскрибация + диаризация аудио (через Replicate)."""
     model = get_model_by_name("whisper", session)
@@ -42,7 +42,7 @@ Depends(get_session)):
     with open(saved_path, "wb") as f:
         f.write(await audio.read())
 
-    task = create_task(Task(input_data=str(saved_path), user_id=current_user_id, model_id=model.id), session)
+    task = create_task(Task(input_data=str(saved_path), user_id=current_user_id, model_id=model.id, title=title.strip() or None), session)
 
     try:
         transaction = reserve_balance(session, current_user_id, model.cost, task.id)
@@ -87,7 +87,7 @@ async def submit_summary(data: SummaryRequest, current_user_id: int = Depends(au
     if balance < model.cost:
         raise HTTPException(status_code=400, detail=f"Недостаточно кредитов. Баланс: {balance}, нужно: {model.cost}")
 
-    task = create_task(Task(input_data=f"source_task={source_task.id}", user_id=current_user_id, model_id=model.id), session)
+    task = create_task(Task(input_data=f"source_task={source_task.id}", user_id=current_user_id, model_id=model.id, title=f"Саммари: {source_task.title}" if source_task.title else None), session)
 
     try:
         transaction = reserve_balance(session, current_user_id, model.cost, task.id)

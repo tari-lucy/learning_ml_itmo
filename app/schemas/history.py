@@ -1,5 +1,6 @@
 from pydantic import BaseModel
 from datetime import datetime
+from typing import Optional
 
 class TaskHistoryItem(BaseModel):
     id: int
@@ -7,6 +8,7 @@ class TaskHistoryItem(BaseModel):
     status: str
     model_id: int
     model_name: str
+    title: Optional[str] = None
     created_at: datetime
 
     class Config:

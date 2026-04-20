@@ -21,6 +21,7 @@ def get_predictions_history(current_user_id: int = Depends(authenticate), sessio
             status=t.status,
             model_id=t.model_id,
             model_name=t.model.name,
+            title=t.title,
             created_at=t.created_at,
         )
         for t in tasks
