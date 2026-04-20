@@ -32,7 +32,7 @@ def _run_whisper(features: Dict[str, Any]) -> Dict[str, Any]:
 
     logger.info(f"run_whisper: отправляю {audio_path} в Replicate")
 
-    client = replicate.Client(api_token=settings.REPLICATE_API_TOKEN)
+    client = replicate.Client(api_token=settings.REPLICATE_API_TOKEN, timeout=600.0)
     with open(audio_path, "rb") as audio_file:
         output = client.run(WHISPER_DIARIZATION_MODEL, input={"file": audio_file, "language": "ru", "group_segments": True})
 
