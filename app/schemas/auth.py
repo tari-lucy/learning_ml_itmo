@@ -1,20 +1,17 @@
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, EmailStr, Field
 
-# Что приходит при регистрации
 class UserCreate(BaseModel):
-    email: str = Field(..., min_length=5, max_length=255, description="Email пользователя")
+    email: EmailStr = Field(..., description="Email пользователя")
     password: str = Field(..., min_length=4, description="Пароль (минимум 4 символа)")
-    name: str = Field(..., description="Имя пользователя")
+    name: str = Field(..., min_length=2, max_length=50, description="Имя пользователя")
 
-# Что приходит при авторизации
 class UserLogin(BaseModel):
-    email: str
+    email: EmailStr
     password: str
 
-# Что возвращаем (БЕЗ пароля!)
 class UserResponse(BaseModel):
     id: int
-    email: str
+    email: EmailStr
     name: str
     role: str
 

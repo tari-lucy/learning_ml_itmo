@@ -2,6 +2,7 @@ import streamlit as st
 # Workaround: streamlit-cookies-manager использует устаревший st.cache
 st.cache = st.cache_data
 
+import re
 import requests
 import pandas as pd
 from datetime import datetime
@@ -9,7 +10,7 @@ from streamlit_cookies_manager import EncryptedCookieManager
 
 API_URL = "http://app:8000"
 
-st.set_page_config(page_title="MeetingScribe", page_icon="🎙️")
+st.set_page_config(page_title="MeetingScribe", page_icon="🎙️", initial_sidebar_state="expanded")
 
 # --- Cookies manager ---
 cookies = EncryptedCookieManager(
@@ -34,14 +35,44 @@ def auth_headers():
 
 
 def parse_error(response):
-    """Безопасный парсер ошибок от backend"""
+    """Информативный парсер ошибок от backend"""
+    FIELD_RU = {"email": "Email", "password": "Пароль", "name": "Имя", "amount": "Сумма", "title": "Название"}
+    MSG_RU = {
+        "String should have at least 4 characters": "должен быть не менее 4 символов",
+        "value is not a valid email address": "некорректный формат email",
+        "field required": "обязательное поле",
+        "Input should be greater than 0": "должно быть больше 0",
+    }
+    prefix = f"[HTTP {response.status_code}]"
     try:
-        return response.json().get('detail', response.text)
+        data = response.json()
+        detail = data.get('detail')
+        if isinstance(detail, list):
+            items = []
+            for e in detail:
+                loc = e.get('loc', [])
+                field = loc[-1] if loc else ""
+                field_ru = FIELD_RU.get(field, field)
+                msg = e.get('msg', '')
+                # убираем "Value error, " префикс если есть
+                msg = msg.replace("Value error, ", "")
+                # русификация частых сообщений
+                for eng, ru in MSG_RU.items():
+                    if eng in msg:
+                        msg = ru
+                        break
+                items.append(f"{field_ru}: {msg}")
+            return f"{prefix} " + "; ".join(items)
+        if detail:
+            return f"{prefix} {detail}"
+        return f"{prefix} {data}"
     except Exception:
-        return (response.text or f"HTTP {response.status_code}")[:300]
+        pass
+    body = (response.text or "").strip()
+    return f"{prefix} {body}" if body else prefix
 
 
-MODEL_LABEL = {"whisper": "🎙️ транскрибация", "summary": "📝 саммари"}
+MODEL_LABEL = {"whisper": "🎙️ Whisper", "summary": "📝 Deepseek v3.2"}
 STATUS_ICON = {"done": "✅", "error": "❌", "pending": "⏳", "processing": "⚙️"}
 STATUS_TEXT = {"done": "✅ Готово", "processing": "⚙️ В обработке", "pending": "⏳ В очереди", "error": "❌ Ошибка"}
 TRANSACTION_TYPE = {
@@ -119,47 +150,53 @@ else:
 
 # --- Страницы ---
 if page == "🏠 Главная":
-    st.title("MeetingScribe — AI-секретарь совещаний")
+    st.title("MeetingScribe — AI-секретарь для совещаний")
     st.markdown("""
-    Загружай аудио совещаний — получай:
+    Просто загружете аудио с совещания — и получаете:
     - 🎙️ **Транскрипт** с разметкой по спикерам
     - 📝 **Саммари** — краткое резюме встречи
-    - 📋 **Протокол** решений и договорённостей
+    - 📋 **Протокол** решений и договорённостей (cooming soon в следующей версии)
 
-    **Как работает:** оплатил кредиты → загрузил mp3/wav → через пару минут получил результат.
+    **Как работает:** оплатили кредиты → загрузили mp3/wav → через пару минут получил результат.
     """)
 
 elif page == "📝 Регистрация":
     st.title("Регистрация")
     with st.form("signup"):
-        name = st.text_input("Имя")
-        email = st.text_input("Email")
-        password = st.text_input("Пароль", type="password")
+        name = st.text_input("Имя *")
+        email = st.text_input("Email *")
+        password = st.text_input("Пароль * (минимум 4 символа)", type="password")
         submitted = st.form_submit_button("Зарегистрироваться")
 
     if submitted:
-        r = requests.post(f"{API_URL}/auth/signup", json={"name": name, "email": email, "password": password})
-        if r.status_code == 201:
-            st.success("✅ Готово! Теперь зайди через «Вход»")
+        if not name or not email or not password:
+            st.error("❌ Заполни все поля (отмеченные звёздочкой)")
         else:
-            st.error(f"❌ {parse_error(r)}")
+            r = requests.post(f"{API_URL}/auth/signup", json={"name": name, "email": email, "password": password})
+            if r.status_code == 201:
+                st.success("✅ Готово! Теперь зайди через «Вход»")
+            else:
+                st.error(f"❌ {parse_error(r)}")
 
 elif page == "🔑 Вход":
     st.title("Вход")
     with st.form("signin"):
-        email = st.text_input("Email")
-        password = st.text_input("Пароль", type="password")
+        email = st.text_input("Email *")
+        password = st.text_input("Пароль *", type="password")
         submitted = st.form_submit_button("Войти")
 
     if submitted:
-        r = requests.post(f"{API_URL}/auth/signin", data={"username": email, "password": password})
-        if r.status_code == 200:
-            data = r.json()
-            login(data["access_token"], data["user_id"], email, data["name"], data["role"])
-            st.success("✅ Вход выполнен")
-            st.rerun()
+        if not email or not password:
+            st.error("❌ Заполни оба поля")
         else:
-            st.error(f"❌ {parse_error(r)}")
+            r = requests.post(f"{API_URL}/auth/signin", data={"username": email, "password": password})
+            if r.status_code == 200:
+                data = r.json()
+                login(data["access_token"], data["user_id"], email, data["name"], data["role"])
+                st.success("✅ Вход выполнен")
+                st.rerun()
+            else:
+                st.error(f"❌ {parse_error(r)}")
 
 elif page == "👤 Кабинет":
     st.title("Личный кабинет")
@@ -182,14 +219,18 @@ elif page == "👤 Кабинет":
 
 elif page == "💰 Пополнить":
     st.title("Пополнить баланс")
-    amount = st.number_input("Сумма пополнения (кредиты)", min_value=1, value=100, step=10)
+    st.caption("Минимум 1 кредит, максимум 100 000")
+    amount = st.number_input("Сумма пополнения (кредиты)", min_value=1, max_value=100000, value=100, step=10)
     if st.button("Пополнить"):
-        r = requests.post(f"{API_URL}/balance/topup", json={"amount": amount}, headers=auth_headers())
-        if r.status_code == 200:
-            d = r.json()
-            st.success(f"✅ {d['message']}. Новый баланс: **{d['new_balance']:.0f} кр.**")
+        if not amount or amount < 1:
+            st.error("❌ Сумма должна быть от 1 до 100 000 кредитов")
         else:
-            st.error(f"❌ {parse_error(r)}")
+            r = requests.post(f"{API_URL}/balance/topup", json={"amount": amount}, headers=auth_headers())
+            if r.status_code == 200:
+                d = r.json()
+                st.success(f"✅ {d['message']}. Новый баланс: **{d['new_balance']:.0f} кр.**")
+            else:
+                st.error(f"❌ {parse_error(r)}")
 
 elif page == "🎙️ Обработка аудио":
     st.title("Обработка аудио")
@@ -202,8 +243,8 @@ elif page == "🎙️ Обработка аудио":
 
     # --- 1. Транскрибация ---
     with tab1:
-        st.caption("Загрузи аудио → получишь транскрипт с разметкой по спикерам. **Стоимость: 10 кр.**")
-        title = st.text_input("Название записи", placeholder="Например: Планёрка 21 апреля")
+        st.caption("Загрузите аудио, чтобы получить транскрипт с разметкой по спикерам. **Стоимость: 10 кредитов**")
+        title = st.text_input("Название записи", placeholder="Например: Планёрка 21 апреля", max_chars=200)
         audio = st.file_uploader("Аудиофайл", type=["mp3", "wav", "m4a", "ogg", "flac", "webm"])
         if st.button("Отправить на транскрибацию", key="whisper_btn"):
             if not audio:
@@ -226,13 +267,13 @@ elif page == "🎙️ Обработка аудио":
 
     # --- 2. Саммари ---
     with tab2:
-        st.caption("Создай саммари из готового транскрипта. **Стоимость: 5 кр.**")
+        st.caption("Создайте саммари из готового транскрипта. **Стоимость: 5 кредитов**")
         whisper_done = [t for t in tasks if t.get("model_name") == "whisper" and t.get("status") == "done"]
         if not whisper_done:
-            st.info("Пока нет готовых транскрипций. Сначала обработай аудио во вкладке «Транскрибация».")
+            st.info("Пока нет готовых транскрипций. Сначала обработайте аудио во вкладке «Транскрибация».")
         else:
             options = {task_label(t): t["id"] for t in reversed(whisper_done)}
-            label = st.selectbox("Выбери транскрипцию", list(options.keys()))
+            label = st.selectbox("Выберите транскрипцию", list(options.keys()))
             if st.button("Создать саммари", key="summary_btn"):
                 r = requests.post(
                     f"{API_URL}/predict/summary",
@@ -251,7 +292,7 @@ elif page == "🎙️ Обработка аудио":
             st.rerun()
 
         if not tasks:
-            st.info("Здесь появятся твои записи после запуска транскрибации или саммари. Начни с вкладки «Транскрибация».")
+            st.info("Здесь появятся ваши записи после запуска транскрибации или саммари. Начните с вкладки «Транскрибация».")
         else:
             options = {task_label(t): t["id"] for t in reversed(tasks)}
             label = st.selectbox("Запись", list(options.keys()))
@@ -265,12 +306,16 @@ elif page == "🎙️ Обработка аудио":
                 model_ru = MODEL_LABEL.get(d['model_name'], d['model_name'])
                 st.write(f"**Статус:** {status_ru} · **Модель:** {model_ru}")
 
-                def show_result(emoji, title_, key, content, filename, expanded=False):
+                def show_result(emoji, title_, key, content, filename, expanded=False, format_speakers=False):
                     if not content:
                         return
+                    display_content = content
+                    if format_speakers:
+                        # Каждую реплику спикера переносим на новую строку
+                        display_content = re.sub(r'\s*(\[SPEAKER_)', r'\n\n\1', content).lstrip()
                     with st.expander(f"{emoji} {title_}", expanded=expanded):
                         with st.container(height=400, border=True):
-                            st.markdown(content)
+                            st.markdown(display_content)
                         st.download_button(
                             f"⬇️ Скачать {title_.lower()}",
                             data=content.encode("utf-8"),
@@ -280,7 +325,7 @@ elif page == "🎙️ Обработка аудио":
                         )
 
                 show_result("🎙️", "Транскрипт", "transcription", d.get("transcription"), "transcript", expanded=True)
-                show_result("👥", "Диаризация", "diarization", d.get("diarization"), "diarization")
+                show_result("👥", "Определение спикеров", "diarization", d.get("diarization"), "diarization", format_speakers=True)
                 show_result("📋", "Протокол", "protocol", d.get("protocol"), "protocol")
                 show_result("📝", "Саммари", "summary", d.get("summary"), "summary", expanded=True)
             else:
@@ -298,7 +343,7 @@ elif page == "📜 История":
                 df = pd.DataFrame([
                     {
                         "Название": t.get("title") or f"Без названия #{t['id']}",
-                        "Тип": MODEL_LABEL.get(t.get("model_name"), t.get("model_name")),
+                        "Модель": MODEL_LABEL.get(t.get("model_name"), t.get("model_name")),
                         "Статус": STATUS_TEXT.get(t.get("status"), t.get("status")),
                         "Дата и время": format_dt(t.get("created_at", "")),
                     }
