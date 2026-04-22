@@ -8,3 +8,8 @@ alembic
 pydantic
 pydantic-settings
 sqlmodel
+pika
+aio-pika
+replicate
+openai
+python-multipart

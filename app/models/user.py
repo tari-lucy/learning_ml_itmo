@@ -12,7 +12,8 @@ class User(SQLModel, table=True):
     email: str = Field(unique=True, index=True, min_length=5, max_length=255)
     password: str = Field(min_length=4)
     name: str
-    role: str = Field(default="user")  # "user" или "admin"
+    role: str = Field(default="user")
+    balance: float = Field(default=0.0)        # ← НОВОЕ ПОЛЕ
     created_at: datetime = Field(default_factory=datetime.utcnow)
     transactions: List["Transaction"] = Relationship(back_populates="user")
     tasks: List["Task"] = Relationship(back_populates="user")
