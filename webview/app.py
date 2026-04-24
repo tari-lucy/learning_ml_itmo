@@ -1,5 +1,5 @@
 import streamlit as st
-# Streamlit-cookies-manager использует устаревший st.cache
+# Workaround: streamlit-cookies-manager использует устаревший st.cache
 st.cache = st.cache_data
 
 import re
@@ -150,14 +150,14 @@ else:
 
 # --- Страницы ---
 if page == "🏠 Главная":
-    st.title("MeetingScribe — AI-секретарь совещаний")
+    st.title("MeetingScribe — AI-секретарь для совещаний")
     st.markdown("""
-    Загружай аудио совещаний — получай:
+    Просто загружете аудио с совещания — и получаете:
     - 🎙️ **Транскрипт** с разметкой по спикерам
     - 📝 **Саммари** — краткое резюме встречи
-    - 📋 **Протокол** решений и договорённостей
+    - 📋 **Протокол** решений и договорённостей (cooming soon в следующей версии)
 
-    **Как работает:** оплатил кредиты → загрузил mp3/wav → через пару минут получил результат.
+    **Как работает:** оплатили кредиты → загрузили mp3/wav → через пару минут получил результат.
     """)
 
 elif page == "📝 Регистрация":
@@ -243,7 +243,7 @@ elif page == "🎙️ Обработка аудио":
 
     # --- 1. Транскрибация ---
     with tab1:
-        st.caption("Загрузи аудио → получишь транскрипт с разметкой по спикерам. **Стоимость: 10 кр.**")
+        st.caption("Загрузите аудио, чтобы получить транскрипт с разметкой по спикерам. **Стоимость: 10 кредитов**")
         title = st.text_input("Название записи", placeholder="Например: Планёрка 21 апреля", max_chars=200)
         audio = st.file_uploader("Аудиофайл", type=["mp3", "wav", "m4a", "ogg", "flac", "webm"])
         if st.button("Отправить на транскрибацию", key="whisper_btn"):
@@ -267,13 +267,13 @@ elif page == "🎙️ Обработка аудио":
 
     # --- 2. Саммари ---
     with tab2:
-        st.caption("Создай саммари из готового транскрипта. **Стоимость: 5 кр.**")
+        st.caption("Создайте саммари из готового транскрипта. **Стоимость: 5 кредитов**")
         whisper_done = [t for t in tasks if t.get("model_name") == "whisper" and t.get("status") == "done"]
         if not whisper_done:
-            st.info("Пока нет готовых транскрипций. Сначала обработай аудио во вкладке «Транскрибация».")
+            st.info("Пока нет готовых транскрипций. Сначала обработайте аудио во вкладке «Транскрибация».")
         else:
             options = {task_label(t): t["id"] for t in reversed(whisper_done)}
-            label = st.selectbox("Выбери транскрипцию", list(options.keys()))
+            label = st.selectbox("Выберите транскрипцию", list(options.keys()))
             if st.button("Создать саммари", key="summary_btn"):
                 r = requests.post(
                     f"{API_URL}/predict/summary",
@@ -292,7 +292,7 @@ elif page == "🎙️ Обработка аудио":
             st.rerun()
 
         if not tasks:
-            st.info("Здесь появятся твои записи после запуска транскрибации или саммари. Начни с вкладки «Транскрибация».")
+            st.info("Здесь появятся ваши записи после запуска транскрибации или саммари. Начните с вкладки «Транскрибация».")
         else:
             options = {task_label(t): t["id"] for t in reversed(tasks)}
             label = st.selectbox("Запись", list(options.keys()))

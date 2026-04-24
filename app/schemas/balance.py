@@ -5,7 +5,6 @@ class BalanceResponse(BaseModel):
     balance: float
 
 class TopUpRequest(BaseModel):
-    user_id: int
     amount: float = Field(..., gt=0, description="Сумма пополнения (больше 0)")
 
 class TopUpResponse(BaseModel):

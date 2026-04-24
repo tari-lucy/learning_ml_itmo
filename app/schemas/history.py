@@ -1,15 +1,19 @@
 from pydantic import BaseModel
 from datetime import datetime
+from typing import Optional
 
 class TaskHistoryItem(BaseModel):
     id: int
     input_data: str
     status: str
     model_id: int
+    model_name: str
+    title: Optional[str] = None
     created_at: datetime
 
     class Config:
         from_attributes = True
+
 
 class TransactionHistoryItem(BaseModel):
     id: int

@@ -19,6 +19,7 @@ class Task(SQLModel, table=True):
     model_config = {"protected_namespaces": ()}
     id: Optional[int] = Field(default=None, primary_key=True)
     input_data: str                                        # путь к файлу или описание входных данных
+    title: Optional[str] = Field(default=None, max_length=200)
     status: str = Field(default=TaskStatus.PENDING.value)  # "pending", "processing", "done", "error"
     created_at: datetime = Field(default_factory=datetime.utcnow)
 

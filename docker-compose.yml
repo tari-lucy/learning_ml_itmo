@@ -29,6 +29,21 @@ services:
     networks:
       - internal
 
+  webview:
+    build: ./webview/
+    container_name: meetingscribe-webview
+    restart: unless-stopped
+    ports:
+      - "8501:8501"
+    volumes:
+      - ./webview:/webview
+    depends_on:
+      app:
+        condition: service_started
+    networks:
+      - internal
+
+
   rabbitmq:
     image: rabbitmq:3-management
     container_name: meetingscribe-rabbitmq
