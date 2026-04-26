@@ -7,9 +7,9 @@ from sqlmodel import Session
 from database.database import get_session
 from services.crud.ml_model import get_model_by_name
 from services.crud.transaction import get_user_balance, reserve_balance, cancel_reserve
-from services.crud.task import create_task, get_task_by_id, get_result_by_task
+from services.crud.task import create_task, get_task_by_id, get_result_by_task, update_result_speakers
 from models.task import Task, TaskStatus
-from schemas.predict import SummaryRequest, PredictAcceptedResponse, PredictStatusResponse
+from schemas.predict import SummaryRequest, PredictAcceptedResponse, PredictStatusResponse, SpeakerNamesRequest
 from queue_client.publisher import publish_task
 from aio_pika.exceptions import AMQPConnectionError
 from auth.authenticate import authenticate
@@ -80,8 +80,10 @@ async def submit_summary(data: SummaryRequest, current_user_id: int = Depends(au
         raise HTTPException(status_code=400, detail=f"Исходная задача {data.source_task_id} ещё не обработана (статус: {source_task.status})")
 
     source_result = get_result_by_task(source_task.id, session)
-    if not source_result or not source_result.transcription:
+    transcript_text = source_result.diarization if source_result and source_result.diarization else (source_result.transcription if source_result else None)
+    if not transcript_text:
         raise HTTPException(status_code=400, detail=f"У исходной задачи {data.source_task_id} нет транскрипта")
+
 
     balance = get_user_balance(session, current_user_id)
     if balance < model.cost:
@@ -98,7 +100,7 @@ async def submit_summary(data: SummaryRequest, current_user_id: int = Depends(au
         raise HTTPException(status_code=400, detail=str(e))
 
     try:
-        await publish_task(task_id=task.id, features={"source_task_id": source_task.id, "transcription": source_result.transcription}, model_name="summary")
+        await publish_task(task_id=task.id, features={"source_task_id": source_task.id, "transcription": transcript_text}, model_name="summary")
     except AMQPConnectionError:
         cancel_reserve(session, transaction.id)
         task.status = TaskStatus.ERROR.value
@@ -125,7 +127,8 @@ async def submit_protocol(data: SummaryRequest, current_user_id: int = Depends(a
         raise HTTPException(status_code=400, detail=f"Исходная задача {data.source_task_id} ещё не обработана (статус: {source_task.status})")
 
     source_result = get_result_by_task(source_task.id, session)
-    if not source_result or not source_result.transcription:
+    transcript_text = source_result.diarization if source_result and source_result.diarization else (source_result.transcription if source_result else None)
+    if not transcript_text:
         raise HTTPException(status_code=400, detail=f"У исходной задачи {data.source_task_id} нет транскрипта")
 
     balance = get_user_balance(session, current_user_id)
@@ -143,7 +146,7 @@ async def submit_protocol(data: SummaryRequest, current_user_id: int = Depends(a
         raise HTTPException(status_code=400, detail=str(e))
 
     try:
-        await publish_task(task_id=task.id, features={"source_task_id": source_task.id, "transcription": source_result.transcription}, model_name="protocol")
+        await publish_task(task_id=task.id, features={"source_task_id": source_task.id, "transcription": transcript_text}, model_name="protocol")
     except AMQPConnectionError:
         cancel_reserve(session, transaction.id)
         task.status = TaskStatus.ERROR.value
@@ -153,6 +156,23 @@ async def submit_protocol(data: SummaryRequest, current_user_id: int = Depends(a
 
     return PredictAcceptedResponse(task_id=task.id, model_name="protocol", credits_charged=model.cost)
 
+@predict_router.patch("/{task_id}/speakers", response_model=PredictStatusResponse)
+def update_speakers(task_id: int, data: SpeakerNamesRequest, current_user_id: int = Depends(authenticate), session: Session =
+Depends(get_session)):
+    """Сохранить имена спикеров (например {SPEAKER_00: Иван, SPEAKER_01: Анна}). Применяется при отображении транскрипта, саммари и протокола."""
+    task = get_task_by_id(task_id, session)
+    if not task:
+        raise HTTPException(status_code=404, detail=f"Задача {task_id} не найдена")
+    if task.user_id != current_user_id:
+        raise HTTPException(status_code=403, detail="Чужая задача — доступ запрещён")
+    if task.status != TaskStatus.DONE.value:
+        raise HTTPException(status_code=400, detail=f"Задача {task_id} ещё не обработана (статус: {task.status})")
+
+    result = update_result_speakers(task_id, data.speaker_names, session)
+    if not result:
+        raise HTTPException(status_code=404, detail=f"Результат для задачи {task_id} не найден")
+
+    return PredictStatusResponse(task_id=task.id, status=task.status, model_name=task.model.name, transcription=result.transcription, diarization=result.diarization, protocol=result.protocol, summary=result.summary, speaker_names=result.speaker_names)
 
 @predict_router.get("/{task_id}", response_model=PredictStatusResponse)
 def get_prediction_status(task_id: int, current_user_id: int = Depends(authenticate), session: Session = Depends(get_session)):
@@ -172,5 +192,16 @@ def get_prediction_status(task_id: int, current_user_id: int = Depends(authentic
             response.diarization = result.diarization
             response.protocol = result.protocol
             response.summary = result.summary
+            response.speaker_names = result.speaker_names
+
+            # Для summary/protocol — если своих имён нет, подтягиваем из исходной whisper-задачи
+            if not response.speaker_names and task.model.name in ("summary", "protocol") and task.input_data and task.input_data.startswith("source_task="):
+                try:
+                    source_id = int(task.input_data.split("=", 1)[1])
+                    source_result = get_result_by_task(source_id, session)
+                    if source_result and source_result.speaker_names:
+                        response.speaker_names = source_result.speaker_names
+                except (ValueError, IndexError):
+                    pass  # невалидный input_data — пропускаем
 
     return response

@@ -26,9 +26,11 @@ def seed_data():
     from services.crud.user import create_user, get_user_by_email
     from services.crud.ml_model import create_ml_model, get_model_by_name
     from services.crud.transaction import top_up_balance
+    from auth.hash_password import HashPassword
     from models.user import User
     from models.ml_model import MLModel
 
+    hash_password = HashPassword()
     engine = get_database_engine()
     with Session(engine) as session:
         # ML-модели
@@ -41,12 +43,12 @@ def seed_data():
 
         # Демо-пользователь
         if not get_user_by_email("demo@meeting.ru", session):
-            demo = create_user(User(email="demo@meeting.ru", password="demo123", name="Demo User"), session)
+            demo = create_user(User(email="demo@meeting.ru", password=hash_password.create_hash("demo123"), name="Demo User"), session)
             top_up_balance(session, demo.id, 100.0)
 
         # Администратор
         if not get_user_by_email("admin@meeting.ru", session):
-            admin = create_user(User(email="admin@meeting.ru", password="admin123", name="Admin", role="admin"), session)
+            admin = create_user(User(email="admin@meeting.ru", password=hash_password.create_hash("admin123"), name="Admin", role="admin"), session)
             top_up_balance(session, admin.id, 500.0)
 
 

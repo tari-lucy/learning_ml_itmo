@@ -54,9 +54,7 @@ def parse_error(response):
                 field = loc[-1] if loc else ""
                 field_ru = FIELD_RU.get(field, field)
                 msg = e.get('msg', '')
-                # убираем "Value error, " префикс если есть
                 msg = msg.replace("Value error, ", "")
-                # русификация частых сообщений
                 for eng, ru in MSG_RU.items():
                     if eng in msg:
                         msg = ru
@@ -70,6 +68,31 @@ def parse_error(response):
         pass
     body = (response.text or "").strip()
     return f"{prefix} {body}" if body else prefix
+
+
+def extract_speakers(text: str) -> list[str]:
+    """Находит все уникальные идентификаторы SPEAKER_XX в тексте, в порядке появления."""
+    if not text:
+        return []
+    found = re.findall(r"SPEAKER_\d+", text)
+    seen = set()
+    unique = []
+    for s in found:
+        if s not in seen:
+            seen.add(s)
+            unique.append(s)
+    return unique
+
+
+def apply_speaker_names(text: str, names: dict) -> str:
+    """Заменяет SPEAKER_XX на реальные имена. Пустые имена — оставляет идентификатор как есть."""
+    if not text or not names:
+        return text
+    result = text
+    for speaker_id, name in names.items():
+        if name and name.strip():
+            result = result.replace(speaker_id, name.strip())
+    return result
 
 
 MODEL_LABEL = {"whisper": "🎙️  Whisper", "summary": "📝 Саммари (Deepseek v3.2)", "protocol": "📋 Протокол (Deepseek v3.2)"}
@@ -95,10 +118,9 @@ def format_dt(iso_str: str) -> str:
 def task_label(t: dict) -> str:
     """Человеческая метка задачи для селектбокса"""
     name = t.get("title") or f"Без названия #{t['id']}"
-    model = MODEL_LABEL.get(t.get("model_name", ""), t.get("model_name", ""))
     icon = STATUS_ICON.get(t.get("status"), "•")
     date = t.get("created_at", "")[:16].replace("T", " ")
-    return f"{icon} {name} · {model} · {date}"
+    return f"{icon} {name} · {date}"
 
 
 def login(access_token, user_id, email, name, role):
@@ -155,7 +177,7 @@ if page == "🏠 Главная":
     Просто загружете аудио с совещания — и получаете:
     - 🎙️ **Транскрипт** с разметкой по спикерам
     - 📝 **Саммари** — краткое резюме встречи
-    - 📋 **Протокол** решений и договорённостей (cooming soon в следующей версии)
+    - 📋 **Протокол** решений и договорённостей
 
     **Как работает:** оплатили кредиты → загрузили mp3/wav → через пару минут получил результат.
     """)
@@ -235,15 +257,15 @@ elif page == "💰 Пополнить":
 elif page == "🎙️ Обработка аудио":
     st.title("Обработка аудио")
 
-    # Загружаем задачи юзера один раз за рендер
+    # Загружаем все задачи юзера один раз за рендер
     r_tasks = requests.get(f"{API_URL}/history/predictions", headers=auth_headers())
     tasks = r_tasks.json() if r_tasks.status_code == 200 else []
 
-    tab1, tab2, tab3 = st.tabs(["🎙️ Транскрибация", "🤖 AI-обработка", "📁 Мои записи"])
+    tab1, tab2 = st.tabs(["🎙️ Загрузить аудио", "📁 Мои записи"])
 
-    # --- 1. Транскрибация ---
+    # --- 1. Загрузка нового аудио ---
     with tab1:
-        st.caption("Загрузите аудио, чтобы получить транскрипт с разметкой по спикерам. **Стоимость: 10 кредитов**")
+        st.caption("Загрузи аудиофайл, чтобы получить транскрипт с разметкой по спикерам. **Стоимость: 10 кредитов**")
         title = st.text_input("Название записи", placeholder="Например: Планёрка 21 апреля", max_chars=200)
         audio = st.file_uploader("Аудиофайл", type=["mp3", "wav", "m4a", "ogg", "flac", "webm"])
         if st.button("Отправить на транскрибацию", key="whisper_btn"):
@@ -261,83 +283,154 @@ elif page == "🎙️ Обработка аудио":
                     d = r.json()
                     st.session_state.last_task_id = d["task_id"]
                     st.success(f"✅ Задача №**{d['task_id']}** принята. Списано **{d['credits_charged']} кр.**")
-                    st.info("Проверь результат во вкладке **«Мои записи»** через минуту.")
+                    st.info("Перейди во вкладку **«Мои записи»** через минуту.")
                 else:
                     st.error(f"❌ {parse_error(r)}")
 
-    # --- 2. AI-обработка (саммари + протокол) ---
+    # --- 2. Мои записи (всё в одном месте) ---
     with tab2:
-        st.caption("Создайте саммари или протокол из готового транскрипта. **Стоимость: 5 кредитов за каждый.**")
-        whisper_done = [t for t in tasks if t.get("model_name") == "whisper" and t.get("status") == "done"]
-        if not whisper_done:
-            st.info("Пока нет готовых транскрипций. Сначала обработайте аудио во вкладке «Транскрибация».")
-        else:
-            options = {task_label(t): t["id"] for t in reversed(whisper_done)}
-            label = st.selectbox("Выберите транскрипцию", list(options.keys()))
-            source_task_id = options[label]
-
-            col1, col2 = st.columns(2)
-            with col1:
-                if st.button("📝 Создать саммари", key="summary_btn", use_container_width=True):
-                    r = requests.post(f"{API_URL}/predict/summary", json={"source_task_id": source_task_id}, headers=auth_headers())
-                    if r.status_code == 202:
-                        d = r.json()
-                        st.success(f"✅ Задача №**{d['task_id']}** принята. Списано **{d['credits_charged']} кр.**")
-                    else:
-                        st.error(f"❌ {parse_error(r)}")
-            with col2:
-                if st.button("📋 Создать протокол", key="protocol_btn", use_container_width=True):
-                    r = requests.post(f"{API_URL}/predict/protocol", json={"source_task_id": source_task_id}, headers=auth_headers())
-                    if r.status_code == 202:
-                        d = r.json()
-                        st.success(f"✅ Задача №**{d['task_id']}** принята. Списано **{d['credits_charged']} кр.**")
-                    else:
-                        st.error(f"❌ {parse_error(r)}")
-
-    # --- 3. Мои записи ---
-    with tab3:
-        if st.button("🔄 Обновить список"):
+        if st.button("🔄 Обновить"):
             st.rerun()
 
-        if not tasks:
-            st.info("Здесь появятся ваши записи после запуска транскрибации или саммари. Начните с вкладки «Транскрибация».")
-        else:
-            options = {task_label(t): t["id"] for t in reversed(tasks)}
-            label = st.selectbox("Запись", list(options.keys()))
-            task_id = options[label]
+        # Показываем только whisper-задачи как "записи"
+        whisper_tasks = [t for t in tasks if t.get("model_name") == "whisper"]
 
-            r = requests.get(f"{API_URL}/predict/{task_id}", headers=auth_headers())
-            if r.status_code == 200:
+        if not whisper_tasks:
+            st.info("Здесь появятся записи после загрузки аудио. Начни с вкладки «Загрузить аудио».")
+        else:
+            options = {task_label(t): t["id"] for t in reversed(whisper_tasks)}
+            label = st.selectbox("Запись", list(options.keys()))
+            whisper_id = options[label]
+
+            # Получаем актуальный результат whisper
+            r = requests.get(f"{API_URL}/predict/{whisper_id}", headers=auth_headers())
+            if r.status_code != 200:
+                st.error(f"❌ {parse_error(r)}")
+            else:
                 d = r.json()
                 STATUS_RU = {"done": "готово", "processing": "в обработке", "pending": "в очереди", "error": "ошибка"}
                 status_ru = STATUS_RU.get(d['status'], d['status'])
-                model_ru = MODEL_LABEL.get(d['model_name'], d['model_name'])
-                st.write(f"**Статус:** {status_ru} · **Модель:** {model_ru}")
+                st.write(f"**Статус транскрибации:** {status_ru}")
 
-                def show_result(emoji, title_, key, content, filename, expanded=False, format_speakers=False):
-                    if not content:
-                        return
-                    display_content = content
-                    if format_speakers:
-                        # Каждую реплику спикера переносим на новую строку
-                        display_content = re.sub(r'\s*(\[SPEAKER_)', r'\n\n\1', content).lstrip()
-                    with st.expander(f"{emoji} {title_}", expanded=expanded):
-                        with st.container(height=400, border=True):
-                            st.markdown(display_content)
-                        st.download_button(
-                            f"⬇️ Скачать {title_.lower()}",
-                            data=content.encode("utf-8"),
-                            file_name=f"{task_id}_{filename}.txt",
-                            mime="text/plain",
-                            key=f"dl_{task_id}_{key}",
-                        )
+                if d['status'] == "pending" or d['status'] == "processing":
+                    st.info("⏳ Обработка идёт. Нажми «🔄 Обновить» через минуту.")
+                elif d['status'] == "error":
+                    st.error("❌ Транскрибация завершилась с ошибкой. Загрузи файл заново.")
+                elif d['status'] == "done":
+                    names = d.get("speaker_names") or {}
 
-                show_result("🎙️", "Транскрипт", "transcription", d.get("transcription"), "transcript", expanded=True)
-                show_result("👥", "Определение спикеров", "diarization", d.get("diarization"), "diarization", format_speakers=True)
-                show_result("📋", "Протокол", "protocol", d.get("protocol"), "protocol")
-                show_result("📝", "Саммари", "summary", d.get("summary"), "summary", expanded=True)
-            else:
-                st.error(f"❌ {parse_error(r)}")
+                    # Утилита для отображения артефакта
+                    def show_artifact(emoji, title_, key, content, filename, expanded=False, format_speakers=False, names_map=None, owner_task_id=None):
+                        if not content:
+                            return
+                        owner_task_id = owner_task_id or whisper_id
+                        display_content = apply_speaker_names(content, names_map or {})
+                        download_content = display_content
+                        if format_speakers:
+                            display_content = re.sub(r'\s*(\[)', r'\n\n\1', display_content).lstrip()
+                        with st.expander(f"{emoji} {title_}", expanded=expanded):
+                            with st.container(height=400, border=True):
+                                st.markdown(display_content)
+                            st.download_button(
+                                f"⬇️ Скачать {title_.lower()}",
+                                data=download_content.encode("utf-8"),
+                                file_name=f"{owner_task_id}_{filename}.txt",
+                                mime="text/plain",
+                                key=f"dl_{owner_task_id}_{key}",
+                            )
+
+                    # Транскрипт + диаризация
+                    show_artifact("🎙️", "Транскрипт", "transcription", d.get("transcription"), "transcript", expanded=True, names_map=names)
+                    show_artifact("👥", "Определение спикеров", "diarization", d.get("diarization"), "diarization", format_speakers=True, names_map=names)
+
+                    # Форма переименования спикеров
+                    speakers = extract_speakers(d.get("diarization") or "")
+                    if speakers:
+                        with st.expander(f"✏️ Переименовать спикеров ({len(speakers)} найдено)", expanded=False):
+                            st.caption("Имена применятся к транскрипту, диаризации, и автоматически подтянутся в саммари и протоколы этой записи.")
+                            existing = d.get("speaker_names") or {}
+                            new_names = {}
+                            for sp in speakers:
+                                new_names[sp] = st.text_input(sp, value=existing.get(sp, ""), key=f"sp_{whisper_id}_{sp}")
+                            if st.button("💾 Сохранить имена", key=f"save_speakers_{whisper_id}"):
+                                rr = requests.patch(
+                                    f"{API_URL}/predict/{whisper_id}/speakers",
+                                    json={"speaker_names": new_names},
+                                    headers=auth_headers(),
+                                )
+                                if rr.status_code == 200:
+                                    st.success("✅ Имена сохранены")
+                                    st.rerun()
+                                else:
+                                    st.error(f"❌ {parse_error(rr)}")
+
+                    st.divider()
+                    st.subheader("AI-обработка")
+                    st.caption("Создай дополнительные артефакты на основе этой записи. **Стоимость: 5 кредитов за каждый.**")
+
+                    # --- Блок саммари ---
+                    related_summary = next(
+                        (t for t in tasks if t.get("model_name") == "summary" and t.get("input_data") == f"source_task={whisper_id}"),
+                        None
+                    )
+
+                    if not related_summary:
+                        if st.button("📝 Создать саммари", key=f"create_summary_{whisper_id}", use_container_width=True):
+                            rr = requests.post(f"{API_URL}/predict/summary", json={"source_task_id": whisper_id}, headers=auth_headers())
+                            if rr.status_code == 202:
+                                st.success("✅ Задача на саммари принята")
+                                st.rerun()
+                            else:
+                                st.error(f"❌ {parse_error(rr)}")
+                    elif related_summary['status'] in ("pending", "processing"):
+                        st.info(f"⏳ Саммари в обработке (задача №{related_summary['id']}). Нажми «🔄 Обновить» через минуту.")
+                    elif related_summary['status'] == "error":
+                        st.error(f"❌ Саммари (задача №{related_summary['id']}): ошибка обработки.")
+                        if st.button("🔁 Создать саммари заново", key=f"retry_summary_{whisper_id}"):
+                            rr = requests.post(f"{API_URL}/predict/summary", json={"source_task_id": whisper_id}, headers=auth_headers())
+                            if rr.status_code == 202:
+                                st.success("✅ Новая задача принята")
+                                st.rerun()
+                            else:
+                                st.error(f"❌ {parse_error(rr)}")
+                    else:  # done
+                        rr = requests.get(f"{API_URL}/predict/{related_summary['id']}", headers=auth_headers())
+                        if rr.status_code == 200:
+                            sd = rr.json()
+                            sd_names = sd.get("speaker_names") or names
+                            show_artifact("📝", "Саммари", "summary", sd.get("summary"), "summary", expanded=True, names_map=sd_names, owner_task_id=related_summary['id'])
+
+                    # --- Блок протокола ---
+                    related_protocol = next(
+                        (t for t in tasks if t.get("model_name") == "protocol" and t.get("input_data") == f"source_task={whisper_id}"),
+                        None
+                    )
+
+                    if not related_protocol:
+                        if st.button("📋 Создать протокол", key=f"create_protocol_{whisper_id}", use_container_width=True):
+                            rr = requests.post(f"{API_URL}/predict/protocol", json={"source_task_id": whisper_id}, headers=auth_headers())
+                            if rr.status_code == 202:
+                                st.success("✅ Задача на протокол принята")
+                                st.rerun()
+                            else:
+                                st.error(f"❌ {parse_error(rr)}")
+                    elif related_protocol['status'] in ("pending", "processing"):
+                        st.info(f"⏳ Протокол в обработке (задача №{related_protocol['id']}). Нажми «🔄 Обновить» через минуту.")
+                    elif related_protocol['status'] == "error":
+                        st.error(f"❌ Протокол (задача №{related_protocol['id']}): ошибка обработки.")
+                        if st.button("🔁 Создать протокол заново", key=f"retry_protocol_{whisper_id}"):
+                            rr = requests.post(f"{API_URL}/predict/protocol", json={"source_task_id": whisper_id}, headers=auth_headers())
+                            if rr.status_code == 202:
+                                st.success("✅ Новая задача принята")
+                                st.rerun()
+                            else:
+                                st.error(f"❌ {parse_error(rr)}")
+                    else:  # done
+                        rr = requests.get(f"{API_URL}/predict/{related_protocol['id']}", headers=auth_headers())
+                        if rr.status_code == 200:
+                            pd_ = rr.json()
+                            pd_names = pd_.get("speaker_names") or names
+                            show_artifact("📋", "Протокол", "protocol", pd_.get("protocol"), "protocol", expanded=False, names_map=pd_names, owner_task_id=related_protocol['id'])
 
 elif page == "📜 История":
     st.title("История операций")

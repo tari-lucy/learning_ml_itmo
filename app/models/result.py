@@ -1,5 +1,6 @@
 from sqlmodel import SQLModel, Field, Relationship
-from typing import Optional, TYPE_CHECKING
+from sqlalchemy import Column, JSON
+from typing import Optional, Dict, TYPE_CHECKING
 from datetime import datetime
 
 if TYPE_CHECKING:
@@ -11,6 +12,7 @@ class Result(SQLModel, table=True):
     diarization: Optional[str] = None
     protocol: Optional[str] = None
     summary: Optional[str] = None
+    speaker_names: Optional[Dict[str, str]] = Field(default=None, sa_column=Column(JSON))
     created_at: datetime = Field(default_factory=datetime.utcnow)
 
     # Связь с задачей (обязательная, один-к-одному)

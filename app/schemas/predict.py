@@ -1,5 +1,5 @@
 from pydantic import BaseModel, Field
-from typing import Optional
+from typing import Optional, Dict
 
 
 class SummaryRequest(BaseModel):
@@ -24,3 +24,8 @@ class PredictStatusResponse(BaseModel):
     diarization: Optional[str] = None
     protocol: Optional[str] = None
     summary: Optional[str] = None
+    speaker_names: Optional[Dict[str, str]] = None
+
+class SpeakerNamesRequest(BaseModel):
+    """PATCH /predict/{task_id}/speakers — словарь имён спикеров"""
+    speaker_names: Dict[str, str] = Field(..., description="Словарь {идентификатор_спикера: имя}, например {\"SPEAKER_00\": \"Иван\", \"SPEAKER_01\": \"Анна\"}")

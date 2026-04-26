@@ -38,3 +38,15 @@ def create_result(result: Result, session: Session) -> Result:
 
 def get_result_by_task(task_id: int, session: Session) -> Optional[Result]:
     return session.exec(select(Result).where(Result.task_id == task_id)).first()
+
+def update_result_speakers(task_id: int, speaker_names: dict, session: Session) -> Result | None:
+    """Обновляет speaker_names в Result указанной задачи"""
+    statement = select(Result).where(Result.task_id == task_id)
+    result = session.exec(statement).first()
+    if not result:
+        return None
+    result.speaker_names = speaker_names
+    session.add(result)
+    session.commit()
+    session.refresh(result)
+    return result
