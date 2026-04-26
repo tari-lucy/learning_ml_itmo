@@ -85,3 +85,8 @@ app.include_router(history_router)
 @app.get("/")
 def root():
     return {"message": "MeetingScribe API работает", "docs": "/docs"}
+
+@app.get("/health")
+def health():
+    """Healthcheck для Docker — отвечает 200, если приложение поднялось"""
+    return {"status": "ok"}

@@ -12,6 +12,12 @@ services:
         condition: service_healthy
       rabbitmq:
         condition: service_healthy
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:8000/health')"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 30s
     networks:
       - internal
 
@@ -100,7 +106,7 @@ services:
       rabbitmq:
         condition: service_healthy
       app:
-        condition: service_started
+        condition: service_healthy
     networks:
       - internal
 
@@ -120,7 +126,7 @@ services:
       rabbitmq:
         condition: service_healthy
       app:
-        condition: service_started
+        condition: service_healthy
     networks:
       - internal
 
