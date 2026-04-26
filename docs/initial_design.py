@@ -1,3 +1,17 @@
+"""
+Артефакт ДЗ-1 «Конструирование ПО»: исходная объектная модель MeetingScribe.
+
+Стартовая точка проектирования — выделение базовых сущностей (User, Balance,
+MLModel, Task, Transaction, Result) и применение принципов ООП.
+
+Актуальная реализация системы находится в:
+- app/models/   — доменные сущности (SQLModel)
+- app/services/ — бизнес-логика и CRUD
+- app/routes/   — REST API
+
+Файл сохранён как этап эволюции архитектуры проекта.
+"""
+
 from datetime import datetime
 from enum import Enum
 
