@@ -72,7 +72,7 @@ def parse_error(response):
     return f"{prefix} {body}" if body else prefix
 
 
-MODEL_LABEL = {"whisper": "🎙️ Whisper", "summary": "📝 Deepseek v3.2"}
+MODEL_LABEL = {"whisper": "🎙️  Whisper", "summary": "📝 Саммари (Deepseek v3.2)", "protocol": "📋 Протокол (Deepseek v3.2)"}
 STATUS_ICON = {"done": "✅", "error": "❌", "pending": "⏳", "processing": "⚙️"}
 STATUS_TEXT = {"done": "✅ Готово", "processing": "⚙️ В обработке", "pending": "⏳ В очереди", "error": "❌ Ошибка"}
 TRANSACTION_TYPE = {
@@ -239,7 +239,7 @@ elif page == "🎙️ Обработка аудио":
     r_tasks = requests.get(f"{API_URL}/history/predictions", headers=auth_headers())
     tasks = r_tasks.json() if r_tasks.status_code == 200 else []
 
-    tab1, tab2, tab3 = st.tabs(["🎙️ Транскрибация", "📝 Саммари", "📁 Мои записи"])
+    tab1, tab2, tab3 = st.tabs(["🎙️ Транскрибация", "🤖 AI-обработка", "📁 Мои записи"])
 
     # --- 1. Транскрибация ---
     with tab1:
@@ -265,26 +265,34 @@ elif page == "🎙️ Обработка аудио":
                 else:
                     st.error(f"❌ {parse_error(r)}")
 
-    # --- 2. Саммари ---
+    # --- 2. AI-обработка (саммари + протокол) ---
     with tab2:
-        st.caption("Создайте саммари из готового транскрипта. **Стоимость: 5 кредитов**")
+        st.caption("Создайте саммари или протокол из готового транскрипта. **Стоимость: 5 кредитов за каждый.**")
         whisper_done = [t for t in tasks if t.get("model_name") == "whisper" and t.get("status") == "done"]
         if not whisper_done:
             st.info("Пока нет готовых транскрипций. Сначала обработайте аудио во вкладке «Транскрибация».")
         else:
             options = {task_label(t): t["id"] for t in reversed(whisper_done)}
             label = st.selectbox("Выберите транскрипцию", list(options.keys()))
-            if st.button("Создать саммари", key="summary_btn"):
-                r = requests.post(
-                    f"{API_URL}/predict/summary",
-                    json={"source_task_id": options[label]},
-                    headers=auth_headers(),
-                )
-                if r.status_code == 202:
-                    d = r.json()
-                    st.success(f"✅ Задача №**{d['task_id']}** принята. Списано **{d['credits_charged']} кр.**")
-                else:
-                    st.error(f"❌ {parse_error(r)}")
+            source_task_id = options[label]
+
+            col1, col2 = st.columns(2)
+            with col1:
+                if st.button("📝 Создать саммари", key="summary_btn", use_container_width=True):
+                    r = requests.post(f"{API_URL}/predict/summary", json={"source_task_id": source_task_id}, headers=auth_headers())
+                    if r.status_code == 202:
+                        d = r.json()
+                        st.success(f"✅ Задача №**{d['task_id']}** принята. Списано **{d['credits_charged']} кр.**")
+                    else:
+                        st.error(f"❌ {parse_error(r)}")
+            with col2:
+                if st.button("📋 Создать протокол", key="protocol_btn", use_container_width=True):
+                    r = requests.post(f"{API_URL}/predict/protocol", json={"source_task_id": source_task_id}, headers=auth_headers())
+                    if r.status_code == 202:
+                        d = r.json()
+                        st.success(f"✅ Задача №**{d['task_id']}** принята. Списано **{d['credits_charged']} кр.**")
+                    else:
+                        st.error(f"❌ {parse_error(r)}")
 
     # --- 3. Мои записи ---
     with tab3:

@@ -109,6 +109,51 @@ async def submit_summary(data: SummaryRequest, current_user_id: int = Depends(au
     return PredictAcceptedResponse(task_id=task.id, model_name="summary", credits_charged=model.cost)
 
 
+@predict_router.post("/protocol", response_model=PredictAcceptedResponse, status_code=202)
+async def submit_protocol(data: SummaryRequest, current_user_id: int = Depends(authenticate), session: Session = Depends(get_session)):
+    """Генерация протокола из готового транскрипта предыдущей задачи whisper."""
+    model = get_model_by_name("protocol", session)
+    if not model:
+        raise HTTPException(status_code=404, detail="Модель 'protocol' не найдена")
+
+    source_task = get_task_by_id(data.source_task_id, session)
+    if not source_task:
+        raise HTTPException(status_code=404, detail=f"Исходная задача {data.source_task_id} не найдена")
+    if source_task.user_id != current_user_id:
+        raise HTTPException(status_code=403, detail="Чужая задача — доступ запрещён")
+    if source_task.status != TaskStatus.DONE.value:
+        raise HTTPException(status_code=400, detail=f"Исходная задача {data.source_task_id} ещё не обработана (статус: {source_task.status})")
+
+    source_result = get_result_by_task(source_task.id, session)
+    if not source_result or not source_result.transcription:
+        raise HTTPException(status_code=400, detail=f"У исходной задачи {data.source_task_id} нет транскрипта")
+
+    balance = get_user_balance(session, current_user_id)
+    if balance < model.cost:
+        raise HTTPException(status_code=400, detail=f"Недостаточно кредитов. Баланс: {balance}, нужно: {model.cost}")
+
+    task = create_task(Task(input_data=f"source_task={source_task.id}", user_id=current_user_id, model_id=model.id, title=f"Протокол: {source_task.title}" if source_task.title else None), session)
+
+    try:
+        transaction = reserve_balance(session, current_user_id, model.cost, task.id)
+    except ValueError as e:
+        task.status = TaskStatus.ERROR.value
+        session.add(task)
+        session.commit()
+        raise HTTPException(status_code=400, detail=str(e))
+
+    try:
+        await publish_task(task_id=task.id, features={"source_task_id": source_task.id, "transcription": source_result.transcription}, model_name="protocol")
+    except AMQPConnectionError:
+        cancel_reserve(session, transaction.id)
+        task.status = TaskStatus.ERROR.value
+        session.add(task)
+        session.commit()
+        raise HTTPException(status_code=503, detail="Сервис очереди задач временно недоступен. Попробуйте позже.")
+
+    return PredictAcceptedResponse(task_id=task.id, model_name="protocol", credits_charged=model.cost)
+
+
 @predict_router.get("/{task_id}", response_model=PredictStatusResponse)
 def get_prediction_status(task_id: int, current_user_id: int = Depends(authenticate), session: Session = Depends(get_session)):
     """Проверить статус задачи и получить результат, если он готов."""
