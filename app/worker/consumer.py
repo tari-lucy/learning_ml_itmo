@@ -16,9 +16,6 @@ from services.crud.transaction import confirm_reserve, cancel_reserve
 from models.task import TaskStatus
 from models.result import Result
 from worker.ml import run_prediction
-from models.user import User
-from models.ml_model import MLModel
-from models.transaction import Transaction
 
 logger = logging.getLogger(__name__)
 

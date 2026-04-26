@@ -1,5 +1,4 @@
 from sqlmodel import SQLModel, Session, create_engine 
-from contextlib import contextmanager
 from .config import get_settings
 
 def get_database_engine():
@@ -43,6 +42,6 @@ def init_db(drop_all: bool = False) -> None:
             SQLModel.metadata.drop_all(engine)
         
         SQLModel.metadata.create_all(engine)
-    except Exception as e:
+    except Exception:
         raise
 

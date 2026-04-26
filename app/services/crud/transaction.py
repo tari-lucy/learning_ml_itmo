@@ -1,7 +1,7 @@
 from models.transaction import Transaction, TransactionStatus
 from models.user import User
 from sqlmodel import Session, select
-from typing import List, Optional
+from typing import List
 
 
 def get_user_balance(session: Session, user_id: int) -> float:

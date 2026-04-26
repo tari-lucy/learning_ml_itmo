@@ -1,0 +1,10 @@
+[tool.ruff]
+exclude = ["docs", ".venv", "__pycache__", ".git", "build", "dist"]
+line-length = 200
+
+[tool.ruff.lint.per-file-ignores]
+# main.py: импорты моделей нужны для SQLModel.metadata.create_all,
+# импорты роутеров — после создания app
+"app/main.py" = ["F401", "E402"]
+# Streamlit: st.cache workaround обязан быть до импорта EncryptedCookieManager
+"webview/app.py" = ["E402"]

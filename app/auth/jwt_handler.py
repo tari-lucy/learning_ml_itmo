@@ -1,6 +1,6 @@
 import time
 from datetime import datetime, timezone
-from fastapi import HTTPException, status
+from fastapi import HTTPException
 from jose import jwt, JWTError
 from database.config import get_settings
 

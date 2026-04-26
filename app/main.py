@@ -27,8 +27,6 @@ def seed_data():
     from services.crud.ml_model import create_ml_model, get_model_by_name
     from services.crud.transaction import top_up_balance
     from auth.hash_password import HashPassword
-    from models.user import User
-    from models.ml_model import MLModel
 
     hash_password = HashPassword()
     engine = get_database_engine()
