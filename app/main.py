@@ -1,3 +1,4 @@
+import logging
 from contextlib import asynccontextmanager
 from fastapi import FastAPI
 from sqlmodel import Session
@@ -7,6 +8,16 @@ from models.task import Task
 from models.transaction import Transaction
 from models.result import Result
 from models.ml_model import MLModel
+
+# --- Добавляем логирование ---
+
+logging.basicConfig(
+    level=logging.INFO,
+    format="%(asctime)s | %(levelname)s | %(name)s | %(message)s",
+)
+
+logger = logging.getLogger(__name__)
+
 
 # --- Подготовка данных (переносим seed_data из старого main.py) ---
 
@@ -44,11 +55,9 @@ async def lifespan(app: FastAPI):
     # При старте: создаём таблицы + демо-данные
     init_db()
     seed_data()
-    print("Сервер запущен, БД готова")
+    logger.info("Сервер запущен, БД готова")
     yield
-    # При остановке (если нужно что-то почистить)
-    print("Сервер остановлен")
-
+    logger.info("Сервер остановлен")
 
 # --- Создание приложения ---
 
