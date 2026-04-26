@@ -1,5 +1,5 @@
 import time
-from datetime import datetime
+from datetime import datetime, timezone
 from fastapi import HTTPException, status
 from jose import jwt, JWTError
 from database.config import get_settings
@@ -18,7 +18,7 @@ def verify_access_token(token: str) -> dict:
         expire = data.get("expires")
         if expire is None:
             raise HTTPException(status_code=400, detail="Токен без срока действия")
-        if datetime.utcnow() > datetime.utcfromtimestamp(expire):
+        if datetime.now(timezone.utc) > datetime.fromtimestamp(expire, timezone.utc):
             raise HTTPException(status_code=403, detail="Срок действия токена истёк")
         return data
     except JWTError:

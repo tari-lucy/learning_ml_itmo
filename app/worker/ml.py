@@ -1,376 +1,109 @@
-import streamlit as st
-# Streamlit-cookies-manager использует устаревший st.cache
-st.cache = st.cache_data
+import json
+import logging
+from typing import Any, Dict
 
-import re
-import requests
-import pandas as pd
-from datetime import datetime
-from streamlit_cookies_manager import EncryptedCookieManager
+import replicate
+from openai import OpenAI
 
-API_URL = "http://app:8000"
+from database.config import get_settings
 
-st.set_page_config(page_title="MeetingScribe", page_icon="🎙️", initial_sidebar_state="expanded")
+logger = logging.getLogger(__name__)
 
-# --- Cookies manager ---
-cookies = EncryptedCookieManager(
-    prefix="meetingscribe/",
-    password="meeting-scribe-cookie-key-2026"
-)
-if not cookies.ready():
-    st.spinner("Загрузка...")
-    st.stop()
-
-# --- Инициализация session state ---
-if "token" not in st.session_state:
-    st.session_state.token = cookies.get("auth_token") or None
-    st.session_state.user_id = int(cookies["auth_user_id"]) if cookies.get("auth_user_id") else None
-    st.session_state.email = cookies.get("auth_email") or None
-    st.session_state.name = cookies.get("auth_name") or None
-    st.session_state.role = cookies.get("auth_role") or None
+WHISPER_DIARIZATION_MODEL = "thomasmol/whisper-diarization:1495a9cddc83b2203b0d8d3516e38b80fd1572ebc4bc5700ac1da56a9b3ed886"
 
 
-def auth_headers():
-    return {"Authorization": f"Bearer {st.session_state.token}"} if st.session_state.token else {}
+def run_prediction(model_name: str, features: Dict[str, Any]) -> Dict[str, Any]:
+    """
+    Диспетчер: по имени модели вызывает нужный backend.
+    Возвращает словарь полей для Result (transcription, diarization, protocol, summary).
+    Незаполненные поля остаются None.
+    """
+    if model_name == "whisper":
+        return _run_whisper(features)
+    if model_name == "summary":
+        return _run_summary(features)
+    raise ValueError(f"Неизвестная модель: {model_name}")
 
 
-def parse_error(response):
-    """Информативный парсер ошибок от backend"""
-    FIELD_RU = {"email": "Email", "password": "Пароль", "name": "Имя", "amount": "Сумма", "title": "Название"}
-    MSG_RU = {
-        "String should have at least 4 characters": "должен быть не менее 4 символов",
-        "value is not a valid email address": "некорректный формат email",
-        "field required": "обязательное поле",
-        "Input should be greater than 0": "должно быть больше 0",
-    }
-    prefix = f"[HTTP {response.status_code}]"
-    try:
-        data = response.json()
-        detail = data.get('detail')
-        if isinstance(detail, list):
-            items = []
-            for e in detail:
-                loc = e.get('loc', [])
-                field = loc[-1] if loc else ""
-                field_ru = FIELD_RU.get(field, field)
-                msg = e.get('msg', '')
-                # убираем "Value error, " префикс если есть
-                msg = msg.replace("Value error, ", "")
-                # русификация частых сообщений
-                for eng, ru in MSG_RU.items():
-                    if eng in msg:
-                        msg = ru
-                        break
-                items.append(f"{field_ru}: {msg}")
-            return f"{prefix} " + "; ".join(items)
-        if detail:
-            return f"{prefix} {detail}"
-        return f"{prefix} {data}"
-    except Exception:
-        pass
-    body = (response.text or "").strip()
-    return f"{prefix} {body}" if body else prefix
+def _run_whisper(features: Dict[str, Any]) -> Dict[str, Any]:
+    """Транскрипция + диаризация через Replicate."""
+    settings = get_settings()
+    audio_path = features["audio_path"]
+
+    logger.info(f"run_whisper: отправляю {audio_path} в Replicate")
+
+    client = replicate.Client(api_token=settings.REPLICATE_API_TOKEN, timeout=600.0)
+    with open(audio_path, "rb") as audio_file:
+        output = client.run(WHISPER_DIARIZATION_MODEL, input={"file": audio_file, "language": "ru", "group_segments": True})
+
+    segments = output.get("segments", []) if isinstance(output, dict) else []
+    transcription = " ".join(seg.get("text", "").strip() for seg in segments).strip()
+    diarization = _format_diarization(segments)
+
+    logger.info(f"run_whisper: получен результат, {len(segments)} сегментов, {len(transcription)} символов")
+
+    return {"transcription": transcription, "diarization": diarization, "protocol": None, "summary": None}
 
 
-MODEL_LABEL = {"whisper": "🎙️ Whisper", "summary": "📝 Deepseek v3.2"}
-STATUS_ICON = {"done": "✅", "error": "❌", "pending": "⏳", "processing": "⚙️"}
-STATUS_TEXT = {"done": "✅ Готово", "processing": "⚙️ В обработке", "pending": "⏳ В очереди", "error": "❌ Ошибка"}
-TRANSACTION_TYPE = {
-    "credit": "💰 Пополнение",
-    "debit": "➖ Списание",
-}
-
-
-def format_dt(iso_str: str) -> str:
-    """ISO datetime → ДД.ММ.ГГ ЧЧ:ММ:СС"""
-    if not iso_str:
+def _format_diarization(segments: list) -> str:
+    """Форматирует сегменты Replicate в читаемый вид: [Speaker X, 00:15-00:30]: текст"""
+    if not segments:
         return ""
-    try:
-        dt = datetime.fromisoformat(iso_str.replace("Z", "+00:00"))
-        return dt.strftime("%d.%m.%y %H:%M:%S")
-    except Exception:
-        return iso_str[:16].replace("T", " ")
+    lines = []
+    for seg in segments:
+        speaker = seg.get("speaker", "?")
+        start = _format_time(seg.get("start", 0))
+        end = _format_time(seg.get("end", 0))
+        text = seg.get("text", "").strip()
+        lines.append(f"[{speaker}, {start}-{end}]: {text}")
+    return "\n".join(lines)
 
 
-def task_label(t: dict) -> str:
-    """Человеческая метка задачи для селектбокса"""
-    name = t.get("title") or f"Без названия #{t['id']}"
-    model = MODEL_LABEL.get(t.get("model_name", ""), t.get("model_name", ""))
-    icon = STATUS_ICON.get(t.get("status"), "•")
-    date = t.get("created_at", "")[:16].replace("T", " ")
-    return f"{icon} {name} · {model} · {date}"
+def _format_time(seconds: float) -> str:
+    total = int(seconds)
+    return f"{total // 60:02d}:{total % 60:02d}"
 
 
-def login(access_token, user_id, email, name, role):
-    st.session_state.token = access_token
-    st.session_state.user_id = user_id
-    st.session_state.email = email
-    st.session_state.name = name
-    st.session_state.role = role
-    cookies["auth_token"] = access_token
-    cookies["auth_user_id"] = str(user_id)
-    cookies["auth_email"] = email
-    cookies["auth_name"] = name
-    cookies["auth_role"] = role
-    cookies.save()
+def _run_summary(features: Dict[str, Any]) -> Dict[str, Any]:
+    """Саммаризация транскрипта через vsellm (OpenAI-совместимый API)."""
+    settings = get_settings()
+    transcription = features["transcription"]
 
+    logger.info(f"run_summary: отправляю транскрипт длиной {len(transcription)} символов в vsellm")
 
-def logout():
-    for key in ["token", "user_id", "email", "role"]:
-        st.session_state[key] = None
-    for ck in ["auth_token", "auth_user_id", "auth_email", "auth_name", "auth_role"]:
-        if ck in cookies:
-            del cookies[ck]
-    cookies.save()
+    client = OpenAI(api_key=settings.VSELLM_API_KEY, base_url=settings.VSELLM_BASE_URL)
 
+    system_prompt = """Ты — AI-ассистент для бизнес-совещаний. Твоя задача — превратить транскрипт совещания в структурированное саммари, которое даёт полное понимание о чём шёл разговор и к чему пришли.
 
-def go_to_topup():
-    st.session_state.nav_radio = "💰 Пополнить"
+Правила:
+- Пиши по-русски, деловым языком, без воды и канцелярита
+- Не придумывай факты — опирайся только на то что есть в транскрипте
+- Если в транскрипте есть имена спикеров (Speaker 0, Speaker 1 и т.п.) — используй их, иначе говори обезличенно
+- Если какого-то раздела нет в совещании — пропусти его, не пиши «не обсуждалось»
+- Объём разделов пропорционален длине и насыщенности совещания: для часового разговора «Краткая суть» — это абзац из 5-10 предложений, а не одна строка
 
+Структура ответа:
 
-# --- Sidebar ---
-st.sidebar.title("🎙️ MeetingScribe")
+**Краткая суть**
+Связный абзац о том, что это было за совещание, кто участвовал, какие главные темы обсуждались и к чему пришли. Этого блока должно хватить чтобы понять контекст не читая дальше.
 
-if st.session_state.token:
-    st.sidebar.markdown(f"### 👋 Привет, {st.session_state.name}")
-    r_bal = requests.get(f"{API_URL}/balance/", headers=auth_headers())
-    if r_bal.status_code == 200:
-        st.sidebar.markdown(f"**💰 Баланс:** {r_bal.json()['balance']:.0f} кр.")
-    page = st.sidebar.radio(
-        "Меню",
-        ["🏠 Главная", "👤 Кабинет", "💰 Пополнить", "🎙️ Обработка аудио", "📜 История"],
-        key="nav_radio",
-    )
-    if st.sidebar.button("Выйти"):
-        logout()
-        st.rerun()
-else:
-    page = st.sidebar.radio("Меню", ["🏠 Главная", "📝 Регистрация", "🔑 Вход"])
+**Обсуждённые темы**
+Детальный маркированный список ключевых тем. По каждой теме — 2-4 предложения: о чём говорили, какие были позиции, какие аргументы звучали.
 
+**Принятые решения**
+Конкретные решения, о которых договорились. Формулируй их точно, как они прозвучали. Если решений нет — пропусти раздел.
 
-# --- Страницы ---
-if page == "🏠 Главная":
-    st.title("MeetingScribe — AI-секретарь совещаний")
-    st.markdown("""
-    Загружай аудио совещаний — получай:
-    - 🎙️ **Транскрипт** с разметкой по спикерам
-    - 📝 **Саммари** — краткое резюме встречи
-    - 📋 **Протокол** решений и договорённостей
+**Задачи и ответственные**
+Action items в формате: «Кто → что → срок (если озвучен)». Если в транскрипте нет явных задач — пропусти раздел.
 
-    **Как работает:** оплатил кредиты → загрузил mp3/wav → через пару минут получил результат.
-    """)
+**Открытые вопросы**
+То, что обсуждали, но не решили. Или то что отложили на следующую встречу. Если всё решили — пропусти раздел."""
 
-elif page == "📝 Регистрация":
-    st.title("Регистрация")
-    with st.form("signup"):
-        name = st.text_input("Имя *")
-        email = st.text_input("Email *")
-        password = st.text_input("Пароль * (минимум 4 символа)", type="password")
-        submitted = st.form_submit_button("Зарегистрироваться")
+    user_prompt = f"Вот транскрипт совещания. Сделай саммари по правилам выше.\n\n---\n\n{transcription}"
 
-    if submitted:
-        if not name or not email or not password:
-            st.error("❌ Заполни все поля (отмеченные звёздочкой)")
-        else:
-            r = requests.post(f"{API_URL}/auth/signup", json={"name": name, "email": email, "password": password})
-            if r.status_code == 201:
-                st.success("✅ Готово! Теперь зайди через «Вход»")
-            else:
-                st.error(f"❌ {parse_error(r)}")
+    response = client.chat.completions.create(model="deepseek/deepseek-v3.2", messages=[{"role": "system", "content": system_prompt}, {"role": "user", "content": user_prompt}], temperature=0.3)
 
-elif page == "🔑 Вход":
-    st.title("Вход")
-    with st.form("signin"):
-        email = st.text_input("Email *")
-        password = st.text_input("Пароль *", type="password")
-        submitted = st.form_submit_button("Войти")
+    summary_text = response.choices[0].message.content or ""
+    logger.info(f"run_summary: получен саммари, {len(summary_text)} символов")
 
-    if submitted:
-        if not email or not password:
-            st.error("❌ Заполни оба поля")
-        else:
-            r = requests.post(f"{API_URL}/auth/signin", data={"username": email, "password": password})
-            if r.status_code == 200:
-                data = r.json()
-                login(data["access_token"], data["user_id"], email, data["name"], data["role"])
-                st.success("✅ Вход выполнен")
-                st.rerun()
-            else:
-                st.error(f"❌ {parse_error(r)}")
-
-elif page == "👤 Кабинет":
-    st.title("Личный кабинет")
-    r = requests.get(f"{API_URL}/balance/", headers=auth_headers())
-    if r.status_code == 200:
-        b = r.json()
-        role_ru = {"user": "пользователь", "admin": "администратор"}.get(st.session_state.role, st.session_state.role)
-        st.markdown(f"""
-**Имя:** {st.session_state.name}
-
-**Email:** {st.session_state.email}
-
-**Роль:** {role_ru}
-
-**Баланс:** {b['balance']:.0f} кр.
-""")
-        st.button("💰 Пополнить баланс", on_click=go_to_topup)
-    else:
-        st.error("Не удалось получить баланс")
-
-elif page == "💰 Пополнить":
-    st.title("Пополнить баланс")
-    st.caption("Минимум 1 кредит, максимум 100 000")
-    amount = st.number_input("Сумма пополнения (кредиты)", min_value=1, max_value=100000, value=100, step=10)
-    if st.button("Пополнить"):
-        if not amount or amount < 1:
-            st.error("❌ Сумма должна быть от 1 до 100 000 кредитов")
-        else:
-            r = requests.post(f"{API_URL}/balance/topup", json={"amount": amount}, headers=auth_headers())
-            if r.status_code == 200:
-                d = r.json()
-                st.success(f"✅ {d['message']}. Новый баланс: **{d['new_balance']:.0f} кр.**")
-            else:
-                st.error(f"❌ {parse_error(r)}")
-
-elif page == "🎙️ Обработка аудио":
-    st.title("Обработка аудио")
-
-    # Загружаем задачи юзера один раз за рендер
-    r_tasks = requests.get(f"{API_URL}/history/predictions", headers=auth_headers())
-    tasks = r_tasks.json() if r_tasks.status_code == 200 else []
-
-    tab1, tab2, tab3 = st.tabs(["🎙️ Транскрибация", "📝 Саммари", "📁 Мои записи"])
-
-    # --- 1. Транскрибация ---
-    with tab1:
-        st.caption("Загрузи аудио → получишь транскрипт с разметкой по спикерам. **Стоимость: 10 кр.**")
-        title = st.text_input("Название записи", placeholder="Например: Планёрка 21 апреля", max_chars=200)
-        audio = st.file_uploader("Аудиофайл", type=["mp3", "wav", "m4a", "ogg", "flac", "webm"])
-        if st.button("Отправить на транскрибацию", key="whisper_btn"):
-            if not audio:
-                st.warning("Сначала выбери файл")
-            else:
-                files = {"audio": (audio.name, audio.getvalue(), audio.type)}
-                r = requests.post(
-                    f"{API_URL}/predict/whisper",
-                    files=files,
-                    data={"title": title},
-                    headers=auth_headers(),
-                )
-                if r.status_code == 202:
-                    d = r.json()
-                    st.session_state.last_task_id = d["task_id"]
-                    st.success(f"✅ Задача №**{d['task_id']}** принята. Списано **{d['credits_charged']} кр.**")
-                    st.info("Проверь результат во вкладке **«Мои записи»** через минуту.")
-                else:
-                    st.error(f"❌ {parse_error(r)}")
-
-    # --- 2. Саммари ---
-    with tab2:
-        st.caption("Создай саммари из готового транскрипта. **Стоимость: 5 кр.**")
-        whisper_done = [t for t in tasks if t.get("model_name") == "whisper" and t.get("status") == "done"]
-        if not whisper_done:
-            st.info("Пока нет готовых транскрипций. Сначала обработай аудио во вкладке «Транскрибация».")
-        else:
-            options = {task_label(t): t["id"] for t in reversed(whisper_done)}
-            label = st.selectbox("Выбери транскрипцию", list(options.keys()))
-            if st.button("Создать саммари", key="summary_btn"):
-                r = requests.post(
-                    f"{API_URL}/predict/summary",
-                    json={"source_task_id": options[label]},
-                    headers=auth_headers(),
-                )
-                if r.status_code == 202:
-                    d = r.json()
-                    st.success(f"✅ Задача №**{d['task_id']}** принята. Списано **{d['credits_charged']} кр.**")
-                else:
-                    st.error(f"❌ {parse_error(r)}")
-
-    # --- 3. Мои записи ---
-    with tab3:
-        if st.button("🔄 Обновить список"):
-            st.rerun()
-
-        if not tasks:
-            st.info("Здесь появятся твои записи после запуска транскрибации или саммари. Начни с вкладки «Транскрибация».")
-        else:
-            options = {task_label(t): t["id"] for t in reversed(tasks)}
-            label = st.selectbox("Запись", list(options.keys()))
-            task_id = options[label]
-
-            r = requests.get(f"{API_URL}/predict/{task_id}", headers=auth_headers())
-            if r.status_code == 200:
-                d = r.json()
-                STATUS_RU = {"done": "готово", "processing": "в обработке", "pending": "в очереди", "error": "ошибка"}
-                status_ru = STATUS_RU.get(d['status'], d['status'])
-                model_ru = MODEL_LABEL.get(d['model_name'], d['model_name'])
-                st.write(f"**Статус:** {status_ru} · **Модель:** {model_ru}")
-
-                def show_result(emoji, title_, key, content, filename, expanded=False, format_speakers=False):
-                    if not content:
-                        return
-                    display_content = content
-                    if format_speakers:
-                        # Каждую реплику спикера переносим на новую строку
-                        display_content = re.sub(r'\s*(\[SPEAKER_)', r'\n\n\1', content).lstrip()
-                    with st.expander(f"{emoji} {title_}", expanded=expanded):
-                        with st.container(height=400, border=True):
-                            st.markdown(display_content)
-                        st.download_button(
-                            f"⬇️ Скачать {title_.lower()}",
-                            data=content.encode("utf-8"),
-                            file_name=f"{task_id}_{filename}.txt",
-                            mime="text/plain",
-                            key=f"dl_{task_id}_{key}",
-                        )
-
-                show_result("🎙️", "Транскрипт", "transcription", d.get("transcription"), "transcript", expanded=True)
-                show_result("👥", "Определение спикеров", "diarization", d.get("diarization"), "diarization", format_speakers=True)
-                show_result("📋", "Протокол", "protocol", d.get("protocol"), "protocol")
-                show_result("📝", "Саммари", "summary", d.get("summary"), "summary", expanded=True)
-            else:
-                st.error(f"❌ {parse_error(r)}")
-
-elif page == "📜 История":
-    st.title("История операций")
-    tab1, tab2 = st.tabs(["🤖 ML-запросы", "💳 Транзакции"])
-
-    with tab1:
-        r = requests.get(f"{API_URL}/history/predictions", headers=auth_headers())
-        if r.status_code == 200:
-            data = r.json()
-            if data:
-                df = pd.DataFrame([
-                    {
-                        "Название": t.get("title") or f"Без названия #{t['id']}",
-                        "Модель": MODEL_LABEL.get(t.get("model_name"), t.get("model_name")),
-                        "Статус": STATUS_TEXT.get(t.get("status"), t.get("status")),
-                        "Дата и время": format_dt(t.get("created_at", "")),
-                    }
-                    for t in reversed(data)
-                ])
-                st.dataframe(df, use_container_width=True, hide_index=True)
-            else:
-                st.info("Ещё нет ML-запросов")
-        else:
-            st.error(f"Ошибка: {parse_error(r)}")
-
-    with tab2:
-        r = requests.get(f"{API_URL}/history/transactions", headers=auth_headers())
-        if r.status_code == 200:
-            data = r.json()
-            if data:
-                df = pd.DataFrame([
-                    {
-                        "Дата и время": format_dt(t.get("created_at", "")),
-                        "Операция": TRANSACTION_TYPE.get(t.get("type"), t.get("type")),
-                        "Сумма, кредиты": t.get("amount", 0),
-                        "Связанная задача": t.get("task_id") or "—",
-                    }
-                    for t in reversed(data)
-                ])
-                st.dataframe(df, use_container_width=True, hide_index=True)
-            else:
-                st.info("Ещё нет транзакций")
-        else:
-            st.error(f"Ошибка: {parse_error(r)}")
+    return {"transcription": None, "diarization": None, "protocol": None, "summary": summary_text}
