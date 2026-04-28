@@ -15,6 +15,7 @@ from services.crud.task import get_task_by_id, update_task_status, create_result
 from services.crud.transaction import confirm_reserve, cancel_reserve
 from models.task import TaskStatus
 from models.result import Result
+from models.ml_model import MLModel
 from worker.ml import run_prediction
 
 logger = logging.getLogger(__name__)
